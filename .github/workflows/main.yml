@@ -1,0 +1,201 @@
+name: Update Design Tokens
+
+on:
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  update-tokens:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v2
+      with:
+        node-version: '16'
+        
+    - name: Create necessary directories
+      run: |
+        mkdir -p scripts
+        mkdir -p FigmaDemoGithub/DesignSystem/Generated
+        mkdir -p tokens
+        
+    - name: Create package.json
+      run: |
+        echo '{
+          "name": "figma-design-tokens",
+          "version": "1.0.0",
+          "private": true,
+          "dependencies": {
+            "style-dictionary": "^3.8.0"
+          }
+        }' > package.json
+        
+    - name: Create Figma fetch script
+      run: |
+        cat << 'EOF' > scripts/fetchFigmaTokens.js
+        const https = require('https');
+        const fs = require('fs');
+
+        const FIGMA_FILE_KEY = process.env.FIGMA_FILE_KEY;
+        const FIGMA_ACCESS_TOKEN = process.env.FIGMA_ACCESS_TOKEN;
+
+        if (!FIGMA_FILE_KEY || !FIGMA_ACCESS_TOKEN) {
+            console.error('Missing required environment variables');
+            process.exit(1);
+        }
+
+        const options = {
+          hostname: 'api.figma.com',
+          path: `/v1/files/${FIGMA_FILE_KEY}/variables/local`,
+          method: 'GET',
+          headers: {
+            'X-Figma-Token': FIGMA_ACCESS_TOKEN
+          }
+        };
+
+        function resolveVariable(variables, variableId, modeId) {
+          const variable = variables[variableId];
+          if (!variable) return null;
+
+          const value = variable.valuesByMode[modeId];
+          if (!value) return null;
+
+          if (value.r !== undefined) {
+            return {
+              type: 'color',
+              value: `rgba(${Math.round(value.r * 255)}, ${Math.round(value.g * 255)}, ${Math.round(value.b * 255)}, ${value.a})`
+            };
+          } else if (typeof value === 'number') {
+            return {
+              type: 'number',
+              value: value
+            };
+          } else if (value.type === 'VARIABLE_ALIAS') {
+            const referencedVariable = variables[value.id];
+            if (!referencedVariable) return null;
+            const refModeId = Object.keys(referencedVariable.valuesByMode)[0];
+            return resolveVariable(variables, value.id, refModeId);
+          }
+          return null;
+        }
+
+        function transformFigmaToStyleDictionary(figmaData) {
+          const { variables } = figmaData.meta;
+          const tokens = {
+            color: {},
+            spacing: {},
+            radius: {},
+            stroke: {}
+          };
+
+          Object.entries(variables).forEach(([id, variable]) => {
+            if (variable.remote) return;
+            const name = variable.name;
+            const defaultMode = Object.keys(variable.valuesByMode)[0];
+            const resolvedValue = resolveVariable(variables, id, defaultMode);
+            if (!resolvedValue) return;
+            const path = name.split('/');
+            let current = tokens;
+            path.forEach((part, index) => {
+              if (index === path.length - 1) {
+                current[part] = { value: resolvedValue.value };
+              } else {
+                current[part] = current[part] || {};
+                current = current[part];
+              }
+            });
+          });
+          return { tokens };
+        }
+
+        const req = https.request(options, res => {
+          let data = '';
+          res.on('data', chunk => data += chunk);
+          res.on('end', () => {
+            try {
+              if (res.statusCode !== 200) {
+                console.error('Error:', res.statusCode, data);
+                process.exit(1);
+              }
+              const figmaData = JSON.parse(data);
+              const styleTokens = transformFigmaToStyleDictionary(figmaData);
+              fs.writeFileSync('tokens/figma-tokens.json', JSON.stringify(styleTokens, null, 2));
+              console.log('✅ Tokens fetched and saved!');
+            } catch (error) {
+              console.error('Error:', error);
+              process.exit(1);
+            }
+          });
+        });
+        req.on('error', error => {
+          console.error('Error:', error);
+          process.exit(1);
+        });
+        req.end();
+        EOF
+
+    - name: Create build script
+      run: |
+        cat << 'EOF' > build.js
+        const StyleDictionary = require('style-dictionary');
+
+        StyleDictionary.registerFormat({
+          name: 'swift/enum',
+          formatter: function({ dictionary }) {
+            return `// Generated file - do not edit
+            import SwiftUI
+
+            enum DesignTokens {
+                ${dictionary.allTokens.map(token => {
+                    const name = token.name.replace(/\//g, '_').replace(/-/g, '_');
+                    return `static let ${name} = "${token.value}"`;
+                }).join('\n    ')}
+            }`;
+          }
+        });
+
+        StyleDictionary.extend({
+          source: ['tokens/**/*.json'],
+          platforms: {
+            swift: {
+              transformGroup: 'ios',
+              buildPath: 'FigmaDemoGithub/DesignSystem/Generated/',
+              files: [{
+                destination: 'DesignTokens.swift',
+                format: 'swift/enum'
+              }]
+            }
+          }
+        }).buildAllPlatforms();
+        EOF
+        
+    - name: Install dependencies
+      run: npm install
+        
+    - name: Fetch tokens from Figma
+      run: node scripts/fetchFigmaTokens.js
+      env:
+        FIGMA_ACCESS_TOKEN: ${{ secrets.FIGMA_ACCESS_TOKEN }}
+        FIGMA_FILE_KEY: ${{ secrets.FIGMA_FILE_KEY }}
+        
+    - name: Transform tokens to Swift
+      run: node build.js
+        
+    - name: Create Pull Request
+      uses: peter-evans/create-pull-request@v5
+      with:
+        commit-message: 'chore: update design tokens'
+        title: '🎨 Update Design Tokens'
+        body: |
+          This PR updates the design tokens from Figma.
+          
+          - Tokens were fetched from Figma file
+          - Transformed into Swift code
+        branch: update-design-tokens
+        delete-branch: true
+        base: main
+        labels: |
+          design-system
+          automated-pr
