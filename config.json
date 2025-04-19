@@ -1,0 +1,50 @@
+{
+  "source": [
+    "tokens/*.json"
+  ],
+  "platforms": {
+    "js": {
+      "buildPath": "build/js/",
+      "transformGroup": "scss",
+      "files": [
+        {
+          "destination": "colorpalette.js",
+          "format": "javascript/es6"
+        }
+      ]
+    },
+    "iOS": {
+      "buildPath": "build/ios/",
+      "prefix": "",
+      "transformGroup": "ios-swift",
+      "files": [
+        {
+          "destination": "colorpalette.swift",
+          "format": "ios-swift/any.swift",
+          "options": {
+            "outputReferences": true
+          },
+          "className": "colorPalette"
+        },
+        {
+          "destination": "enum.swift",
+          "format": "ios-swift/enum.swift"
+        }
+      ]
+    },
+    "CSS": {
+      "buildPath": "build/css//",
+      "prefix": "",
+      "transformGroup": "css",
+      "files": [
+        {
+          "destination": "variables.css",
+          "format": "css/variables",
+          "options": {
+            "outputReferences": true
+          }
+        }
+      ]
+    }
+  }
+}
