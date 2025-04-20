@@ -1,0 +1,46 @@
+name: Sync Figma Variables
+
+on:
+  workflow_dispatch:
+    inputs:
+      fileKey:
+        description: 'Figma File Key'
+        required: true
+        type: string
+  schedule:
+    - cron: '0 0 * * *'  # Runs daily at midnight
+
+jobs:
+  sync-variables:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Install Dependencies
+        run: |
+          npm install axios
+          npm install style-dictionary
+          
+      - name: Fetch Figma Variables
+        env:
+          FIGMA_ACCESS_TOKEN: ${{ secrets.FIGMA_ACCESS_TOKEN }}
+          FIGMA_FILE_KEY: ${{ inputs.fileKey }}
+        run: node .github/scripts/fetch-figma-variables.js
+        
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          title: 'feat: update design tokens from Figma'
+          commit-message: 'feat: update design tokens from Figma'
+          branch: feat/update-design-tokens
+          delete-branch: true
+          body: |
+            Auto-generated PR from Figma variables sync
+            
+            This PR updates the design tokens based on the latest Figma variables.
