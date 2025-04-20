@@ -7,7 +7,8 @@ const FIGMA_FILE_KEY = process.env.FIGMA_FILE_KEY;
 
 async function fetchFigmaVariables() {
   try {
-    const response = await axios.get(
+    // Fetch variables and their collections
+    const variablesResponse = await axios.get(
       `https://api.figma.com/v1/files/${FIGMA_FILE_KEY}/variables/local`,
       {
         headers: {
@@ -16,11 +17,20 @@ async function fetchFigmaVariables() {
       }
     );
 
-    const collections = response.data.meta.variableCollections;
-    const variables = response.data.meta.variables;
-    
-    // Transform variables into StyleDictionary format
-    const tokens = transformToStyleDictionary(collections, variables);
+    // Create a map of variable IDs to their actual values
+    const variableMap = {};
+    Object.entries(variablesResponse.data.meta.variables).forEach(([id, variable]) => {
+      const modeId = Object.keys(variable.valuesByMode)[0];
+      const value = variable.valuesByMode[modeId];
+      variableMap[id] = {
+        value,
+        resolvedType: variable.resolvedType,
+        name: variable.name
+      };
+    });
+
+    // Transform variables into StyleDictionary format with resolved references
+    const tokens = transformToStyleDictionary(variableMap);
     
     // Write to a JSON file that Style Dictionary will use
     fs.writeFileSync(
@@ -34,37 +44,51 @@ async function fetchFigmaVariables() {
   }
 }
 
-function transformToStyleDictionary(collections, variables) {
+function resolveVariableValue(variableId, variableMap, visited = new Set()) {
+  if (visited.has(variableId)) {
+    console.warn(`Circular reference detected for variable ${variableId}`);
+    return null;
+  }
+
+  const variable = variableMap[variableId];
+  if (!variable) return null;
+
+  visited.add(variableId);
+
+  if (variable.value.type === 'VARIABLE_ALIAS') {
+    // Extract the base variable ID (remove any collection prefix)
+    const referencedId = variable.value.id.split('/').pop();
+    return resolveVariableValue(referencedId, variableMap, visited);
+  }
+
+  return variable.value;
+}
+
+function transformToStyleDictionary(variableMap) {
   const tokens = {
     color: {},
     spacing: {},
-    typography: {},
+    typography: {}
   };
 
-  Object.values(variables).forEach(variable => {
-    const value = variable.valuesByMode[Object.keys(variable.valuesByMode)[0]];
+  Object.entries(variableMap).forEach(([id, variable]) => {
+    const resolvedValue = resolveVariableValue(id, variableMap);
     
     switch(variable.resolvedType) {
       case 'COLOR':
-        if (typeof value === 'object' && value.r !== undefined) {
+        if (resolvedValue && typeof resolvedValue === 'object' && resolvedValue.r !== undefined) {
           tokens.color[variable.name] = {
-            value: rgbaToHex(value),
-            type: 'color'
-          };
-        } else if (value.type === 'VARIABLE_ALIAS') {
-          // Handle variable aliases by referencing the original variable
-          tokens.color[variable.name] = {
-            value: `{${value.id}}`,
+            value: rgbaToHex(resolvedValue),
             type: 'color'
           };
         }
         break;
       case 'FLOAT':
       case 'NUMBER':
-        const numericValue = parseFloat(value);
-        if (variable.name.includes('spacing') || variable.name.includes('padding')) {
+        const numericValue = parseFloat(resolvedValue);
+        if (!isNaN(numericValue) && (variable.name.includes('padding') || variable.name.includes('spacing'))) {
           tokens.spacing[variable.name] = {
-            value: `${numericValue}`,
+            value: numericValue.toString(),
             type: 'spacing'
           };
         }
