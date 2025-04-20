@@ -7,8 +7,6 @@ on:
         description: 'Figma File Key'
         required: true
         type: string
-  schedule:
-    - cron: '0 0 * * *'  # Runs daily at midnight
 
 jobs:
   sync-variables:
@@ -22,15 +20,18 @@ jobs:
         with:
           node-version: '18'
           
+      - name: Create temp directory for node_modules
+        run: mkdir -p ./.npm-temp
+          
       - name: Install Dependencies
         run: |
-          npm install axios
-          npm install style-dictionary
+          npm install --prefix ./.npm-temp axios style-dictionary
           
       - name: Fetch Figma Variables
         env:
           FIGMA_ACCESS_TOKEN: ${{ secrets.FIGMA_ACCESS_TOKEN }}
           FIGMA_FILE_KEY: ${{ inputs.fileKey }}
+          NODE_PATH: ./.npm-temp/node_modules
         run: node .github/scripts/fetch-figma-variables.js
         
       - name: Create Pull Request
@@ -40,6 +41,8 @@ jobs:
           commit-message: 'feat: update design tokens from Figma'
           branch: feat/update-design-tokens
           delete-branch: true
+          add-paths: |
+            DesignSystem/tokens.json
           body: |
             Auto-generated PR from Figma variables sync
             

@@ -39,33 +39,49 @@ function transformToStyleDictionary(collections, variables) {
     color: {},
     spacing: {},
     typography: {},
-    // Add other token categories as needed
   };
 
-  // Transform Figma variables to tokens
   Object.values(variables).forEach(variable => {
     const value = variable.valuesByMode[Object.keys(variable.valuesByMode)[0]];
     
     switch(variable.resolvedType) {
       case 'COLOR':
-        tokens.color[variable.name] = {
-          value: value,
-          type: 'color'
-        };
+        if (typeof value === 'object' && value.r !== undefined) {
+          tokens.color[variable.name] = {
+            value: rgbaToHex(value),
+            type: 'color'
+          };
+        } else if (value.type === 'VARIABLE_ALIAS') {
+          // Handle variable aliases by referencing the original variable
+          tokens.color[variable.name] = {
+            value: `{${value.id}}`,
+            type: 'color'
+          };
+        }
         break;
       case 'FLOAT':
-        if (variable.name.includes('spacing')) {
+      case 'NUMBER':
+        const numericValue = parseFloat(value);
+        if (variable.name.includes('spacing') || variable.name.includes('padding')) {
           tokens.spacing[variable.name] = {
-            value: `${value}`,
+            value: `${numericValue}`,
             type: 'spacing'
           };
         }
         break;
-      // Add other cases as needed
     }
   });
 
   return tokens;
+}
+
+function rgbaToHex({ r, g, b, a }) {
+  const toHex = (value) => {
+    const hex = Math.round(value * 255).toString(16);
+    return hex.length === 1 ? '0' + hex : hex;
+  };
+
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}${a < 1 ? toHex(a) : ''}`;
 }
 
 fetchFigmaVariables();
