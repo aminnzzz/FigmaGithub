@@ -1,4 +1,4 @@
-name: Design System Token Sync
+name: Sync Figma variables to tokens (and code)
 on:
   workflow_dispatch:
     inputs:
