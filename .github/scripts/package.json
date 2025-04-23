@@ -1,0 +1,11 @@
+{
+  "name": "figma-variables-sync",
+  "version": "1.0.0",
+  "scripts": {
+    "fetch": "node fetch-figma-variables.js"
+  },
+  "dependencies": {
+    "axios": "^1.8.4",
+    "style-dictionary": "^4.3.3"
+  }
+}
