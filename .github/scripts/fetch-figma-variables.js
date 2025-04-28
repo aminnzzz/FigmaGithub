@@ -98,21 +98,17 @@ function buildVariableMap(variables, variableCollections) {
 }
 
 function transformToStyleDictionary(variableMap) {
-  const styleDictionary = {
-    color: {},
-    spacing: {},
-    typography: {}
-  };
-
   const tokens = {
     color: {},
+    padding: {},
     spacing: {},
     radius: {},
     borderWidth: {},
     typography: {}
   };
 
-  const spacingRegex     = /(?:padding|spacing)/i;
+  const paddingRegex     = /^padding\//i;
+  const spacingRegex     = /^spacing\//i;
   const radiusRegex      = /(?:radius|border-?radius)/i;
   const borderWidthRegex = /(?:stroke|border-?width)/i;
   const fontSizeRegex    = /(?:font-?size|type-?size)/i;
@@ -137,6 +133,9 @@ function transformToStyleDictionary(variableMap) {
 
       if (spacingRegex.test(name)) {
         tokens.spacing[name] = { value: num.toString(), type: 'spacing' };
+      }
+      else if (paddingRegex.test(name)) {
+        tokens.padding[name] = { value: num.toString(), type: 'padding' };
       }
       else if (radiusRegex.test(name)) {
         tokens.radius[name] = { value: num.toString(), type: 'borderRadius' };
