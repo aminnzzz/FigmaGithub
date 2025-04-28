@@ -1,111 +1,206 @@
 const axios = require('axios');
-const fs = require('fs');
+const axiosRetry = require('axios-retry');
+const { promises: fs } = require('fs');
 const path = require('path');
 
-const FIGMA_ACCESS_TOKEN = process.env.FIGMA_ACCESS_TOKEN;
-const FIGMA_FILE_KEY = process.env.FIGMA_FILE_KEY;
+const {
+  FIGMA_ACCESS_TOKEN,
+  FIGMA_FILE_KEY,
+  FIGMA_API_BASE = 'https://api.figma.com/v1'
+} = process.env;
 
-async function fetchFigmaVariables() {
-  try {
-    // Fetch variables and their collections
-    const variablesResponse = await axios.get(
-      `https://api.figma.com/v1/files/${FIGMA_FILE_KEY}/variables/local`,
-      {
-        headers: {
-          'X-Figma-Token': FIGMA_ACCESS_TOKEN
-        }
-      }
-    );
-
-    // Create a map of variable IDs to their actual values
-    const variableMap = {};
-    Object.entries(variablesResponse.data.meta.variables).forEach(([id, variable]) => {
-      const modeId = Object.keys(variable.valuesByMode)[0];
-      const value = variable.valuesByMode[modeId];
-      variableMap[id] = {
-        value,
-        resolvedType: variable.resolvedType,
-        name: variable.name
-      };
-    });
-
-    // Transform variables into StyleDictionary format with resolved references
-    const tokens = transformToStyleDictionary(variableMap);
-    
-    // Write to a JSON file that Style Dictionary will use
-    fs.writeFileSync(
-      path.join(__dirname, '../../DesignSystem/tokens.json'),
-      JSON.stringify(tokens, null, 2)
-    );
-    
-  } catch (error) {
-    console.error('Error fetching Figma variables:', error);
-    process.exit(1);
-  }
+if (!FIGMA_ACCESS_TOKEN || !FIGMA_FILE_KEY) {
+  console.error('⛔ Missing FIGMA_ACCESS_TOKEN or FIGMA_FILE_KEY');
+  process.exit(1);
 }
 
-function resolveVariableValue(variableId, variableMap, visited = new Set()) {
-  if (visited.has(variableId)) {
-    console.warn(`Circular reference detected for variable ${variableId}`);
-    return null;
+const client = axios.create({
+  baseURL: FIGMA_API_BASE,
+  timeout: 5000,
+  headers: { 'X-Figma-Token': FIGMA_ACCESS_TOKEN }
+});
+
+axiosRetry(client, {
+  retries: 3,
+  retryDelay: axiosRetry.exponentialDelay,
+  retryCondition: err =>
+    axiosRetry.isNetworkOrIdempotentRequestError(err) ||
+    err.response?.status === 429,
+  onRetry: (err, attempt) =>
+    console.log(`Retry #${attempt} ${err.config.method.toUpperCase()} ${err.config.url}: ${err.message}`)
+});
+
+async function fetchFigmaVariables() {
+  const endpoint = `/files/${FIGMA_FILE_KEY}/variables/local`;
+  const { data } = await client.get(endpoint);
+  const { status, error, meta } = data;
+
+  if (status !== 200 || error) {
+    throw new Error(`Figma API error (status=${status}, error=${error})`);
   }
 
-  const variable = variableMap[variableId];
-  if (!variable) return null;
+  const { variables, variableCollections } = meta || {};
 
-  visited.add(variableId);
-
-  if (variable.value.type === 'VARIABLE_ALIAS') {
-    // Extract the base variable ID (remove any collection prefix)
-    const referencedId = variable.value.id.split('/').pop();
-    return resolveVariableValue(referencedId, variableMap, visited);
+  if (!variables || !variableCollections) {
+    throw new Error('Unexpected Figma response: missing meta.variables or meta.variableCollections');
   }
 
-  return variable.value;
+  const variableMap = buildVariableMap(variables, variableCollections);
+  const tokens = transformToStyleDictionary(variableMap);
+
+  const outputPath = path.resolve(__dirname, '../../DesignSystem/tokens.json');
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+
+  await fs.writeFile(outputPath, JSON.stringify(tokens, null, 2));
+  console.log(`✅ Wrote ${Object.keys(tokens.color).length + Object.keys(tokens.spacing).length} tokens to ${outputPath}`);
+
+  return tokens;
+}
+
+function buildVariableMap(variables, variableCollections) {
+  const entries = Object.entries(variables);
+  const total = entries.length;
+  const variableMap = {};
+
+  for (const [id, variable] of entries) {
+    const {
+      variableCollectionId,
+      valuesByMode,
+      name,
+      resolvedType
+    } = variable;
+
+    const collection = variableCollections[variableCollectionId];
+    if (!collection) {
+      console.warn(
+        `⚠️ Missing collection "${variableCollectionId}" for variable "${id}".`
+      );
+      continue;
+    }
+
+    const { defaultModeId: modeId } = collection;
+    const rawValue = valuesByMode?.[modeId];
+    if (rawValue === undefined) {
+      console.warn(
+        `⚠️ Mode "${modeId}" not present for variable "${id}".`
+      );
+      continue;
+    }
+
+    variableMap[id] = {
+      name: typeof name === 'string' ? name.trim() : name,
+      resolvedType,
+      value: rawValue
+    };
+  }
+
+  return variableMap;
 }
 
 function transformToStyleDictionary(variableMap) {
-  const tokens = {
+  const styleDictionary = {
     color: {},
     spacing: {},
     typography: {}
   };
 
-  Object.entries(variableMap).forEach(([id, variable]) => {
-    const resolvedValue = resolveVariableValue(id, variableMap);
-    
-    switch(variable.resolvedType) {
-      case 'COLOR':
-        if (resolvedValue && typeof resolvedValue === 'object' && resolvedValue.r !== undefined) {
-          tokens.color[variable.name] = {
-            value: rgbaToHex(resolvedValue),
-            type: 'color'
-          };
-        }
-        break;
-      case 'FLOAT':
-      case 'NUMBER':
-        const numericValue = parseFloat(resolvedValue);
-        if (!isNaN(numericValue) && (variable.name.includes('padding') || variable.name.includes('spacing'))) {
-          tokens.spacing[variable.name] = {
-            value: numericValue.toString(),
-            type: 'spacing'
-          };
-        }
-        break;
+  const tokens = {
+    color: {},
+    spacing: {},
+    radius: {},
+    borderWidth: {},
+    typography: {}
+  };
+
+  const spacingRegex     = /(?:padding|spacing)/i;
+  const radiusRegex      = /(?:radius|border-?radius)/i;
+  const borderWidthRegex = /(?:stroke|border-?width)/i;
+  const fontSizeRegex    = /(?:font-?size|type-?size)/i;
+  const lineHeightRegex  = /(?:line-?height)/i;
+
+  for (const [id, { name, resolvedType }] of Object.entries(variableMap)) {
+    const value = resolveVariableValue(id, variableMap);
+
+    if (resolvedType === 'COLOR') {
+      if (value && value.r != null) {
+        tokens.color[name] = { value: rgbaToHex(value), type: 'color' };
+      } else {
+        console.warn(`⚠️ Unable to resolve COLOR for token "${name}"`);
+      }
     }
-  });
+    else if (resolvedType === 'FLOAT' || resolvedType === 'NUMBER') {
+      const num = parseFloat(value);
+      if (isNaN(num)) {
+        console.warn(`⚠️ Invalid number for "${name}":`, value);
+        continue;
+      }
+
+      if (spacingRegex.test(name)) {
+        tokens.spacing[name] = { value: num.toString(), type: 'spacing' };
+      }
+      else if (radiusRegex.test(name)) {
+        tokens.radius[name] = { value: num.toString(), type: 'borderRadius' };
+      }
+      else if (borderWidthRegex.test(name)) {
+        tokens.borderWidth[name] = { value: num.toString(), type: 'borderWidth' };
+      }
+      else if (fontSizeRegex.test(name)) {
+        tokens.typography[name] = { value: `${num}px`, type: 'fontSize' };
+      }
+      else if (lineHeightRegex.test(name)) {
+        tokens.typography[name] = { value: `${num}px`, type: 'lineHeight' };
+      }
+      else {
+        // Fallback: generic numeric token
+        tokens.typography[name] = { value: num.toString(), type: 'number' };
+      }
+    }
+  }
 
   return tokens;
 }
 
-function rgbaToHex({ r, g, b, a }) {
-  const toHex = (value) => {
-    const hex = Math.round(value * 255).toString(16);
-    return hex.length === 1 ? '0' + hex : hex;
-  };
+function resolveVariableValue(startId, variableMap) {
+  const visited = new Set();
+  let currentId = startId;
 
+  while (true) {
+    if (visited.has(currentId)) {
+      console.warn(`⚠️ Circular alias detected at "${currentId}".`);
+      return null;
+    }
+
+    visited.add(currentId);
+
+    const variable = variableMap[currentId];
+    if (!variable) {
+      console.warn(`⚠️ Variable not found: "${currentId}".`);
+      return null;
+    }
+
+    const { value } = variable;
+    // If it’s an alias, follow its `id` to the next variable
+    if (value && typeof value === 'object' && value.type === 'VARIABLE_ALIAS') {
+      if (!value.id) {
+        console.warn(`⚠️ Alias for "${currentId}" is missing 'id'.`);
+        return null;
+      }
+      currentId = value.id;
+      continue;
+    }
+
+    return value != null ? value : null;
+  }
+}
+
+// 6) helper: rgba → hex string, including alpha if < 1
+function rgbaToHex({ r, g, b, a }) {
+  const toHex = v => {
+    const h = Math.round(v * 255).toString(16);
+    return h.length === 1 ? '0' + h : h;
+  };
   return `#${toHex(r)}${toHex(g)}${toHex(b)}${a < 1 ? toHex(a) : ''}`;
 }
 
+// 7) actually kick it off
 fetchFigmaVariables();

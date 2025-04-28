@@ -11,29 +11,27 @@ on:
 jobs:
   sync-variables:
     runs-on: ubuntu-latest
-    
     steps:
-      - uses: actions/checkout@v3
-      
-      - name: Setup Node.js
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js with cache
         uses: actions/setup-node@v3
         with:
           node-version: '18'
-          
-      - name: Create temp directory for node_modules
-        run: mkdir -p ./.npm-temp
-          
-      - name: Install Dependencies
-        run: |
-          npm install --prefix ./.npm-temp axios style-dictionary
-          
+          cache: 'npm'
+
+      - name: Install script dependencies
+        working-directory: .github/scripts
+        run: npm ci
+
       - name: Fetch Figma Variables
+        working-directory: .github/scripts
         env:
           FIGMA_ACCESS_TOKEN: ${{ secrets.FIGMA_ACCESS_TOKEN }}
-          FIGMA_FILE_KEY: ${{ inputs.fileKey }}
-          NODE_PATH: ./.npm-temp/node_modules
-        run: node .github/scripts/fetch-figma-variables.js
-        
+          FIGMA_FILE_KEY:    ${{ inputs.fileKey }}
+        run: npm run fetch
+
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
         with:
@@ -45,5 +43,3 @@ jobs:
             DesignSystem/tokens.json
           body: |
             Auto-generated PR from Figma variables sync
-            
-            This PR updates the design tokens based on the latest Figma variables.
