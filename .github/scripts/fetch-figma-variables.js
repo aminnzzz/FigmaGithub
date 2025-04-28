@@ -1,5 +1,5 @@
 const axios = require('axios');
-const axiosRetry = require('axios-retry');
+const axiosRetry = require('axios-retry').default;
 const { promises: fs } = require('fs');
 const path = require('path');
 
@@ -193,14 +193,29 @@ function resolveVariableValue(startId, variableMap) {
   }
 }
 
-// 6) helper: rgba → hex string, including alpha if < 1
-function rgbaToHex({ r, g, b, a }) {
-  const toHex = v => {
-    const h = Math.round(v * 255).toString(16);
-    return h.length === 1 ? '0' + h : h;
-  };
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}${a < 1 ? toHex(a) : ''}`;
+function rgbaToHex({ r, g, b, a = 1 }) {
+  // Ensure channels are numbers
+  [r, g, b, a].forEach((v, i) => {
+    if (typeof v !== 'number' || Number.isNaN(v)) {
+      throw new TypeError(`Channel ${['r','g','b','a'][i]} must be a number, got ${v}`);
+    }
+  });
+
+  // Clamp into [0,1]
+  const clamp = v => Math.min(1, Math.max(0, v));
+
+  // Convert a single channel to two-digit uppercase hex
+  const toHex = v =>
+    Math.round(clamp(v) * 255)
+      .toString(16)
+      .padStart(2, '0')
+      .toUpperCase();
+
+  const rgbHex = `${toHex(r)}${toHex(g)}${toHex(b)}`;
+  // Only append alpha if it’s not fully opaque
+  return a < 1
+    ? `#${rgbHex}${toHex(a)}`
+    : `#${rgbHex}`;
 }
 
-// 7) actually kick it off
 fetchFigmaVariables();
