@@ -48,7 +48,7 @@ async function fetchFigmaVariables() {
   const variableMap = buildVariableMap(variables, variableCollections);
   const tokens = transformToStyleDictionary(variableMap);
 
-  const outputPath = path.resolve(__dirname, '../../DesignSystem/tokens.json');
+  const outputPath = path.resolve(__dirname, '../../FigmaDemoGithub/tokens.json');
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
   await fs.writeFile(outputPath, JSON.stringify(tokens, null, 2));
@@ -107,12 +107,12 @@ function transformToStyleDictionary(variableMap) {
     typography: {}
   };
 
-  const paddingRegex     = /^padding\//i;
-  const spacingRegex     = /^spacing\//i;
-  const radiusRegex      = /(?:radius|border-?radius)/i;
-  const borderWidthRegex = /(?:stroke|border-?width)/i;
-  const fontSizeRegex    = /(?:font-?size|type-?size)/i;
-  const lineHeightRegex  = /(?:line-?height)/i;
+  const paddingRegex    = /^padding\//i;
+  const spacingRegex    = /^spacing\//i;
+  const radiusRegex     = /^(?:radius|border-?radius)\//i;
+  const borderWidthRegex= /^(?:stroke|border-?width)\//i;
+  const fontSizeRegex   = /^(?:font-?size|type-?size)\//i;
+  const lineHeightRegex = /^line-?height\//i;
 
   for (const [id, { name, resolvedType }] of Object.entries(variableMap)) {
     const value = resolveVariableValue(id, variableMap);

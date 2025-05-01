@@ -33,6 +33,10 @@ jobs:
           FIGMA_FILE_KEY:    ${{ inputs.fileKey }}
         run: npm run fetch
 
+      - name: Build Swift & Android code
+        working-directory: .github/scripts
+        run: npm run build
+
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
         with:
@@ -41,6 +45,6 @@ jobs:
           branch: feat/update-design-tokens
           delete-branch: true
           add-paths: |
-            DesignSystem/tokens.json
+            FigmaDemoGithub/tokens.json
           body: |
             Auto-generated PR from Figma variables sync
