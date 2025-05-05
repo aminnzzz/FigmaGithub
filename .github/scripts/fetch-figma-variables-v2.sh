@@ -31,7 +31,7 @@ for id in $(echo "$vars" | jq -r 'keys[]'); do
   modeId=$(echo "$coll" | jq -r '.defaultModeId')
   rawVal=$(echo "$entry" | jq -c --arg modeId "$modeId" '.valuesByMode[$modeId] // empty')
   [[ -z "$rawVal" ]] && { echo "⚠️ Mode $modeId missing for $id" >&2; continue; }
-  nameMap["$id"]=$(echo "$entry" | jq -r '.name' )
+  nameMap["$id"]=$(echo "$entry" | jq -r '.name')
   typeMap["$id"]=$(echo "$entry" | jq -r '.resolvedType')
   rawMap["$id"]="$rawVal"
 done
@@ -63,12 +63,29 @@ for id in "${!nameMap[@]}"; do
   value=$(resolve "$id")
 
   if [[ "$typ" == "COLOR" ]]; then
-    # Convert RGBA to HEX (uppercase, with alpha when <1)
-    hex=$(jq -r --argjson v "$value" '
-      def clamp(f): if f<0 then 0 elif f>1 then 1 else f end;
-      def hx(f): (clamp(f)*255|round|tohex) as $h | if ($h|length)==1 then "0"+$h else $h end | ascii_upcase;
-      "#" + hx($v.r) + hx($v.g) + hx($v.b) + (if ($v.a//1) < 1 then hx($v.a) else "" end)
-    ' <<< "$value")
+    # Convert RGBA to HEX
+    rawJson="$value"
+    r=$(echo "$rawJson" | jq -r '.r * 255 | round')
+    g=$(echo "$rawJson" | jq -r '.g * 255 | round')
+    b=$(echo "$rawJson" | jq -r '.b * 255 | round')
+    aVal=$(echo "$rawJson" | jq -r '(.a // 1) * 255 | round')
+    # Clamp channels
+    for chan in r g b aVal; do
+      val=${!chan}
+      if (( val < 0 )); then val=0; fi
+      if (( val > 255 )); then val=255; fi
+      declare "$chan"="$val"
+    done
+    # Format as two-digit uppercase hex
+    printf -v rhx '%02X' "$r"
+    printf -v ghx '%02X' "$g"
+    printf -v bhx '%02X' "$b"
+    if (( aVal < 255 )); then
+      printf -v ahx '%02X' "$aVal"
+      hex="#${rhx}${ghx}${bhx}${ahx}"
+    else
+      hex="#${rhx}${ghx}${bhx}"
+    fi
     jq ".color[\"$name\"]={value:\"$hex\",type:\"color\"}" tmp-tokens.json > tmp2.json && mv tmp2.json tmp-tokens.json
 
   elif [[ "$typ" =~ ^(FLOAT|NUMBER)$ ]]; then
@@ -86,6 +103,6 @@ for id in "${!nameMap[@]}"; do
   fi
 done
 
-# Rename and finalize
+# Finalize output
 mv tmp-tokens.json "$OUTPUT_PATH"
 echo "✅ Wrote tokens to $OUTPUT_PATH"
