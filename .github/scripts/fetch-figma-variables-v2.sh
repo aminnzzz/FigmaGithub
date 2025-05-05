@@ -31,7 +31,7 @@ for id in $(echo "$vars" | jq -r 'keys[]'); do
   modeId=$(echo "$coll" | jq -r '.defaultModeId')
   rawVal=$(echo "$entry" | jq -c --arg modeId "$modeId" '.valuesByMode[$modeId] // empty')
   [[ -z "$rawVal" ]] && { echo "⚠️ Mode $modeId missing for $id" >&2; continue; }
-  nameMap["$id"]=$(echo "$entry" | jq -r '.name | @sh' | sed "s/^'//;s/'$//")
+  nameMap["$id"]=$(echo "$entry" | jq -r '.name' )
   typeMap["$id"]=$(echo "$entry" | jq -r '.resolvedType')
   rawMap["$id"]="$rawVal"
 done
@@ -52,7 +52,7 @@ resolve() {
   done
 }
 
-# Initialize output structure
+# Initialize Style Dictionary structure
 mkdir -p "$(dirname "$OUTPUT_PATH")"
 echo '{"color":{},"padding":{},"spacing":{},"radius":{},"borderWidth":{},"typography":{}}' > tmp-tokens.json
 
@@ -63,20 +63,21 @@ for id in "${!nameMap[@]}"; do
   value=$(resolve "$id")
 
   if [[ "$typ" == "COLOR" ]]; then
-    hex=$(echo "$value" | jq -r '\
-      def clamp(f): if f<0 then 0 elif f>1 then 1 else f end;\
-      def toHx(f): (clamp(f)*255 | round | tohex) as $h | if ($h | length)==1 then "0" + $h else $h end | ascii_upcase;\
-      "#" + (toHx(.r) + toHx(.g) + toHx(.b) + (if ((.a // 1) < 1) then toHx(.a // 1) else "" end))\
-    ')
+    # Convert RGBA to HEX (uppercase, with alpha when <1)
+    hex=$(jq -r --argjson v "$value" '
+      def clamp(f): if f<0 then 0 elif f>1 then 1 else f end;
+      def hx(f): (clamp(f)*255|round|tohex) as $h | if ($h|length)==1 then "0"+$h else $h end | ascii_upcase;
+      "#" + hx($v.r) + hx($v.g) + hx($v.b) + (if ($v.a//1) < 1 then hx($v.a) else "" end)
+    ' <<< "$value")
     jq ".color[\"$name\"]={value:\"$hex\",type:\"color\"}" tmp-tokens.json > tmp2.json && mv tmp2.json tmp-tokens.json
 
   elif [[ "$typ" =~ ^(FLOAT|NUMBER)$ ]]; then
     num=$(echo "$value" | jq -r)
-    # Classify token by name pattern
-    if [[ $name =~ ^spacing/ ]];       then sec="spacing"; catType="spacing";
-    elif [[ $name =~ ^padding/ ]];     then sec="padding"; catType="padding";
+    # Classify numeric token
+    if [[ $name =~ ^spacing/ ]]; then sec="spacing"; catType="spacing";
+    elif [[ $name =~ ^padding/ ]]; then sec="padding"; catType="padding";
     elif [[ $name =~ ^(radius|border-?radius)/ ]]; then sec="radius"; catType="borderRadius";
-    elif [[ $name =~ ^(stroke|border-?width)/ ]];  then sec="borderWidth"; catType="borderWidth";
+    elif [[ $name =~ ^(stroke|border-?width)/ ]]; then sec="borderWidth"; catType="borderWidth";
     elif [[ $name =~ ^(font-?size|type-?size)/ ]]; then sec="typography"; catType="fontSize"; num="${num}px";
     elif [[ $name =~ ^line-?height/ ]]; then sec="typography"; catType="lineHeight"; num="${num}px";
     else sec="typography"; catType="number";
@@ -85,5 +86,6 @@ for id in "${!nameMap[@]}"; do
   fi
 done
 
+# Rename and finalize
 mv tmp-tokens.json "$OUTPUT_PATH"
 echo "✅ Wrote tokens to $OUTPUT_PATH"
