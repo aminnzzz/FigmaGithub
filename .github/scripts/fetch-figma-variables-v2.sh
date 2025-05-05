@@ -4,27 +4,16 @@ set -euo pipefail
 : "${FIGMA_ACCESS_TOKEN:?Need FIGMA_ACCESS_TOKEN}"
 : "${FIGMA_FILE_KEY:?Need FIGMA_FILE_KEY}"
 API_BASE="${FIGMA_API_BASE:-https://api.figma.com/v1}"
+OUT_JSON="FigmaDemoGithub/tokens.json"
 
-# 1) Fetch
+# 1) Fetch raw JSON
 raw=$(curl -sSL \
   -H "X-Figma-Token: $FIGMA_ACCESS_TOKEN" \
   "$API_BASE/files/$FIGMA_FILE_KEY/variables/local")
 
-# 2) Quick sanity check
-echo "➤ Raw JSON top‐level keys: $(jq -r 'keys | join(", ")' <<<"$raw")"
-echo "➤ meta keys:          $(jq -r '.meta | keys | join(", ")' <<<"$raw")"
-# Does `.variables` live at root?
-echo "➤ has .variables?     $(jq -r 'has("variables")' <<<"$raw")"
-# Does `.meta.variables` exist?
-echo "➤ has .meta.variables? $(jq -r '.meta | has("variables")' <<<"$raw")"
-
-# … earlier parts of fetch-figma-variables-v2.sh …
-
-# … earlier in fetch-figma-variables-v2.sh …
-
-# 2b) Refined first‐variable debug using meta.variables & meta.variableCollections
+# 2) Sanity check
 echo "➤ First variable entry details:"
-jq -r '
+echo "$raw" | jq -r '
   .meta as $m
   | $m.variables
   | to_entries[0] as $e
@@ -33,31 +22,48 @@ jq -r '
   | ($e.key)                              as $id
   | ($e.value.name)                       as $name
   | ($e.value.valuesByMode[$mode])        as $raw
-  | "ID: \($id) → Name: \($name) → Mode: \($mode) → RawValue: \($raw)"
-' <<<"$raw" || echo "  ❌ failed to extract first var"
+  | "ID: \($id) -> Name: \($name) -> RawValue: \($raw)" 
+'
 
+# 3) Build just the color bucket with hex conversion
+colors_json=$(echo "$raw" | jq -r '
+  .meta as $m
+  | ($m.variables | to_entries[])
+  | map(
+      # For each [id, var]:
+      ( .value.name ) as $name
+      | (.value.variableCollectionId) as $cid
+      | ($m.variableCollections[$cid].defaultModeId) as $mode
+      | (.value.valuesByMode[$mode])      as $c
+      # RGBA → hex
+      | ($c.r * 255 | floor) as $r
+      | ($c.g * 255 | floor) as $g
+      | ($c.b * 255 | floor) as $b
+      | (
+          ( "0123456789ABCDEF"[( $r/16|floor ):1] + "0123456789ABCDEF"[( $r%16 ):1] )
+          +
+          ( "0123456789ABCDEF"[( $g/16|floor ):1] + "0123456789ABCDEF"[( $g%16 ):1] )
+          +
+          ( "0123456789ABCDEF"[( $b/16|floor ):1] + "0123456789ABCDEF"[( $b%16 ):1] )
+        ) as $hex
+      | { ($name): { value: "#\($hex)", type: "color" } }
+    )
+  | add
+')
 
-
-# 3) Count collections & vars
-echo "➤ # variableCollections: $(jq -r '.meta.variableCollections | keys | length' <<<"$raw")"
-# If variables at root
-if jq -e 'has("variables")' <<<"$raw" >/dev/null; then
-  echo "➤ # variables (root):   $(jq -r '.variables | keys | length' <<<"$raw")"
-else
-  echo "➤ # variables (meta):   $(jq -r '.meta.variables | keys | length' <<<"$raw")"
-fi
-
-# 4) Let’s try a minimal transform: pull out the first variable’s name & raw value
-echo "➤ First variable entry:"
-jq -r '
-  ( .variables // .meta.variables ) 
-  | to_entries[0] 
-  | "\(.key) → \(.value.valuesByMode[ (.meta.variableCollections[\(.value.variableCollectionId)].defaultModeId) ])"
-' <<<"$raw" || echo "  ❌ failed to extract first var"
-
-# 5) Stub out writing real tokens.json (so the workflow still passes)
-mkdir -p FigmaDemoGithub
-cat > FigmaDemoGithub/tokens.json <<EOF
-{ "debug": true }
+# 4) Write tokens.json with real colors + stub for others
+mkdir -p "$(dirname "$OUT_JSON")"
+cat > "$OUT_JSON" <<EOF
+{
+  "color": $colors_json,
+  "spacing": {},
+  "padding": {},
+  "radius": {},
+  "borderWidth": {},
+  "typography": {}
+}
 EOF
-echo "✅ Debug script completed (wrote debug tokens.json)"
+
+# 5) Report
+count=$(echo "$colors_json" | jq 'keys | length')
+echo "✅ Wrote $count color tokens to $OUT_JSON (other categories stubbed)"
