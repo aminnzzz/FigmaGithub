@@ -19,18 +19,12 @@ if [[ "$status" -ne 200 || "$error" == "true" ]]; then
   exit 1
 fi
 
-# 3. Transform with jq
-#    This jq filter does:
-#      a) Builds a map of id → {name, type, rawValue}
-#      b) Resolves VARIABLE_ALIAS chains
-#      c) Groups into color, spacing, padding, radius, borderWidth, typography
-#      d) Converts RGBA to hex
-#
-jq -n --argfile data <(printf '%s' "$raw") '
-  ## helper: resolve a VARIABLE_ALIAS chain
+# 3. Transform with jq (read JSON from stdin, no --argfile)
+echo "$raw" | jq '
+  # Recursively resolve VARIABLE_ALIAS chains
   def resolve($id):
-    ($data.meta.variables[$id] // {} ) as $var
-    | ($data.meta.variableCollections[$var.variableCollectionId].defaultModeId) as $mode
+    (.meta.variables[$id] // {}) as $var
+    | (.meta.variableCollections[$var.variableCollectionId].defaultModeId) as $mode
     | ($var.valuesByMode[$mode]) as $v
     | if ($v|type)=="object" and ($v.type=="VARIABLE_ALIAS") then
         resolve($v.id)
@@ -38,44 +32,46 @@ jq -n --argfile data <(printf '%s' "$raw") '
         $v
       end;
 
-  ## build tokens
+  # Helper: convert 0–255 integer to two‐char uppercase hex
+  def hex2(i):
+    (i|floor) as $x
+    | ($x/16|floor) as $h1
+    | ($x%16) as $h2
+    | "0123456789ABCDEF"[$h1:1] + "0123456789ABCDEF"[$h2:1];
+
+  # Build the six buckets
   {
-    color:   ({}),
-    spacing: ({}),
-    padding: ({}),
-    radius:  ({}),
-    borderWidth: ({}),
-    typography:  ({})
+    color: {}, spacing: {}, padding: {}, radius: {}, borderWidth: {}, typography: {}
   }
-  | reduce ($data.meta.variables | to_entries[]) as $e (
+  | reduce (.meta.variables | to_entries[]) as $e (
       .;
       ($e.value.resolvedType) as $t
       | ($e.value.name) as $name
       | (resolve($e.key)) as $val
+
+      # COLOR → hex
       | if $t=="COLOR" then
-          ## rgba → hex
-          ($val.r*255|floor|tostring|lpad(2;"0") +
-           $val.g*255|floor|tostring|lpad(2;"0") +
-           $val.b*255|floor|tostring|lpad(2;"0")) as $hex
-          | .color[$name] = {value:"#\($hex|ascii_upcase)", type:"color"}
-        elif ($t=="FLOAT" or $t=="NUMBER") then
+          ($val.r*255|floor) as $r
+          | ($val.g*255|floor) as $g
+          | ($val.b*255|floor) as $b
+          | (hex2($r) + hex2($g) + hex2($b)) as $hex
+          | .color[$name] = {value:"#"+$hex, type:"color"}
+
+      # FLOAT/NUMBER → numeric tokens
+      elif ($t=="FLOAT" or $t=="NUMBER") then
           ($val|tostring) as $s
-          | if $name|test("^spacing/";"i")    then .spacing[$name]    = {value:$s, type:"spacing"}
-            elif $name|test("^padding/";"i")   then .padding[$name]    = {value:$s, type:"padding"}
-            elif $name|test("^(radius|border-?radius)/";"i")
-                                                 then .radius[$name]     = {value:$s, type:"borderRadius"}
-            elif $name|test("^(stroke|border-?width)/";"i")
-                                                 then .borderWidth[$name]= {value:$s, type:"borderWidth"}
-            elif $name|test("^(font-?size|type-?size)/";"i")
-                                                 then .typography[$name] = {value:"\($s)px", type:"fontSize"}
-            elif $name|test("^line-?height/";"i")
-                                                 then .typography[$name] = {value:"\($s)px", type:"lineHeight"}
-            else                              .typography[$name] = {value:$s, type:"number"}
+          | if     $name|test("^spacing/";"i")          then .spacing[$name]     = {value:$s, type:"spacing"}
+            elif  $name|test("^padding/";"i")          then .padding[$name]     = {value:$s, type:"padding"}
+            elif  $name|test("^(radius|border-?radius)/";"i")  then .radius[$name]      = {value:$s, type:"borderRadius"}
+            elif  $name|test("^(stroke|border-?width)/";"i")   then .borderWidth[$name]= {value:$s, type:"borderWidth"}
+            elif  $name|test("^(font-?size|type-?size)/";"i") then .typography[$name]  = {value:($s+"px"), type:"fontSize"}
+            elif  $name|test("^line-?height/";"i")     then .typography[$name]  = {value:($s+"px"), type:"lineHeight"}
+            else                                          .typography[$name]  = {value:$s, type:"number"}
           end
-        else
-          .
-        end
+
+      else .
+      end
     )
 ' > "$OUT_JSON"
 
-echo "✅ Wrote tokens to $OUT_JSON"
+echo "✅ Wrote $(jq -r '(.color|keys|length) + (.spacing|keys|length) + (.padding|keys|length) + (.radius|keys|length) + (.borderWidth|keys|length) + (.typography|keys|length)' "$OUT_JSON") tokens to $OUT_JSON"
