@@ -18,6 +18,20 @@ echo "➤ has .variables?     $(jq -r 'has("variables")' <<<"$raw")"
 # Does `.meta.variables` exist?
 echo "➤ has .meta.variables? $(jq -r '.meta | has("variables")' <<<"$raw")"
 
+# … earlier parts of fetch-figma-variables-v2.sh …
+
+# 2b) Refined first‐variable debug
+echo "➤ First variable entry details:"
+jq -r '
+  . as $root
+  | $root.meta.variables
+  | to_entries[0]             # grab the first entry
+  | (.value.variableCollectionId) as $cid
+  | ($root.meta.variableCollections[$cid].defaultModeId) as $mode
+  | "ID: \(.key) -> Name: \(.value.name) -> Mode: \($mode) -> RawValue: \(.value.valuesByMode[$mode])"
+' <<<"$raw" || echo "  ❌ failed to extract first var"
+
+
 # 3) Count collections & vars
 echo "➤ # variableCollections: $(jq -r '.meta.variableCollections | keys | length' <<<"$raw")"
 # If variables at root
