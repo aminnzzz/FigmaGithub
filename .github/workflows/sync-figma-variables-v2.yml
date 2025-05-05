@@ -1,4 +1,4 @@
-name: Sync Figma Variables V2
+name: Sync Figma Variables v2
 
 on:
   workflow_dispatch:
@@ -11,25 +11,19 @@ on:
 jobs:
   sync-variables:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v3
 
-      - name: Install CLI dependencies
+      - name: Fetch Figma Variables (bash)
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y jq yq
-
-      - name: Make sync script executable
-        run: chmod +x .github/scripts/fetch-figma-variables-v2.sh
-
-      - name: Run Figma sync script
+          chmod +x .github/scripts/fetch-figma-variables.sh
+          .github/scripts/fetch-figma-variables.sh \
+            "$FIGMA_ACCESS_TOKEN" \
+            "${{ inputs.fileKey }}"
         env:
           FIGMA_ACCESS_TOKEN: ${{ secrets.FIGMA_ACCESS_TOKEN }}
-          FIGMA_FILE_KEY:    ${{ inputs.fileKey }}
-          FIGMA_API_BASE:    https://api.figma.com/v1
-        run: ./.github/scripts/fetch-figma-variables-v2.sh
+          FIGMA_API_BASE: https://api.figma.com/v1
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
