@@ -27,28 +27,39 @@ for id in $(echo "$vars" | jq -r 'keys[]'); do
   entry=$(echo "$vars" | jq -c --arg id "$id" '.[$id]')
   colId=$(echo "$entry" | jq -r '.variableCollectionId')
   coll=$(echo "$cols" | jq -c --arg colId "$colId" '.[$colId]')
-  [[ "$coll" == "null" ]] && { echo "⚠️ Missing collection $colId for $id" >&2; continue; }
+  if [[ "$coll" == "null" ]]; then
+    echo "⚠️ Missing collection $colId for $id" >&2
+    continue
+  fi
   modeId=$(echo "$coll" | jq -r '.defaultModeId')
   rawVal=$(echo "$entry" | jq -c --arg modeId "$modeId" '.valuesByMode[$modeId] // empty')
-  [[ -z "$rawVal" ]] && { echo "⚠️ Mode $modeId missing for $id" >&2; continue; }
+  if [[ -z "$rawVal" ]]; then
+    echo "⚠️ Mode $modeId missing for $id" >&2
+    continue
+  fi
   nameMap["$id"]=$(echo "$entry" | jq -r '.name')
   typeMap["$id"]=$(echo "$entry" | jq -r '.resolvedType')
   rawMap["$id"]="$rawVal"
 done
 
-# Resolve aliases
+# Resolve aliases and return final JSON value
 resolve() {
-  local curr="$1" visited=()
+  local curr="$1"
+  local visited=()
+  local val
   while true; do
-    for v in "${visited[@]}"; do [[ "$v" == "$curr" ]] && { echo null; return; }; done
+    for v in "${visited[@]}"; do
+      [[ "$v" == "$curr" ]] && { echo 'null'; return; }
+    done
     visited+=("$curr")
     val="${rawMap[$curr]}"
-    typ="${typeMap[$curr]}"
-    if [[ "$typ" == "VARIABLE_ALIAS" ]]; then
+    # Follow VARIABLE_ALIAS values
+    if echo "$val" | jq -e 'has("type") and .type=="VARIABLE_ALIAS"' >/dev/null 2>&1; then
       curr=$(echo "$val" | jq -r '.id')
       continue
     fi
-    echo "$val"; return
+    echo "$val"
+    return
   done
 }
 
@@ -58,25 +69,23 @@ echo '{"color":{},"padding":{},"spacing":{},"radius":{},"borderWidth":{},"typogr
 
 # Populate tokens
 for id in "${!nameMap[@]}"; do
-  name="${nameMap[$id]}"
-  typ="${typeMap[$id]}"
+  name=${nameMap[$id]}
+  typ=${typeMap[$id]}
   value=$(resolve "$id")
 
   if [[ "$typ" == "COLOR" ]]; then
-    # Convert RGBA to HEX
-    rawJson="$value"
-    r=$(echo "$rawJson" | jq -r '.r * 255 | round')
-    g=$(echo "$rawJson" | jq -r '.g * 255 | round')
-    b=$(echo "$rawJson" | jq -r '.b * 255 | round')
-    aVal=$(echo "$rawJson" | jq -r '(.a // 1) * 255 | round')
-    # Clamp channels
-    for chan in r g b aVal; do
-      val=${!chan}
-      if (( val < 0 )); then val=0; fi
-      if (( val > 255 )); then val=255; fi
-      declare "$chan"="$val"
-    done
-    # Format as two-digit uppercase hex
+    # Extract and clamp RGBA channels, scale to 0–255
+    read r g b aVal < <(
+      echo "$value" | jq -r '
+        [ .r, .g, .b, (.a // 1) ]
+        | map(
+            (if . < 0 then 0 elif . > 1 then 1 else . end) * 255
+            | round
+          )
+        | .[]
+      '
+    )
+    # Format channels as two-digit uppercase hexadecimal
     printf -v rhx '%02X' "$r"
     printf -v ghx '%02X' "$g"
     printf -v bhx '%02X' "$b"
@@ -86,11 +95,12 @@ for id in "${!nameMap[@]}"; do
     else
       hex="#${rhx}${ghx}${bhx}"
     fi
-    jq ".color[\"$name\"]={value:\"$hex\",type:\"color\"}" tmp-tokens.json > tmp2.json && mv tmp2.json tmp-tokens.json
+    jq --arg name "$name" --arg hex "$hex" \
+       '.color[$name]={value:$hex,type:"color"}' tmp-tokens.json > tmp2.json && mv tmp2.json tmp-tokens.json
 
   elif [[ "$typ" =~ ^(FLOAT|NUMBER)$ ]]; then
     num=$(echo "$value" | jq -r)
-    # Classify numeric token
+    # Classify numeric token by name
     if [[ $name =~ ^spacing/ ]]; then sec="spacing"; catType="spacing";
     elif [[ $name =~ ^padding/ ]]; then sec="padding"; catType="padding";
     elif [[ $name =~ ^(radius|border-?radius)/ ]]; then sec="radius"; catType="borderRadius";
@@ -99,10 +109,11 @@ for id in "${!nameMap[@]}"; do
     elif [[ $name =~ ^line-?height/ ]]; then sec="typography"; catType="lineHeight"; num="${num}px";
     else sec="typography"; catType="number";
     fi
-    jq ".${sec}[\"$name\"]={value:\"$num\",type:\"$catType\"}" tmp-tokens.json > tmp2.json && mv tmp2.json tmp-tokens.json
+    jq --arg name "$name" --arg num "$num" --arg catType "$catType" --arg sec "$sec" \
+       '.[$sec][$name]={value:$num,type:$catType}' tmp-tokens.json > tmp2.json && mv tmp2.json tmp-tokens.json
   fi
 done
 
-# Finalize output
+# Finalize tokens.json
 mv tmp-tokens.json "$OUTPUT_PATH"
 echo "✅ Wrote tokens to $OUTPUT_PATH"
