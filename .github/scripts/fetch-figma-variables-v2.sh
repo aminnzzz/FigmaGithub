@@ -26,9 +26,11 @@ echo "$raw" | jq -r '
 '
 
 # 3) Build just the color bucket correctly
+# 3) Build just the color bucket correctly, filtering for COLOR types
 colors_json=$(echo "$raw" | jq -r '
   .meta as $m
-  | ($m.variables | to_entries)         # <-- FIXED: keep as an array
+  | ($m.variables | to_entries)
+  | map(select(.value.resolvedType == "COLOR"))
   | map(
       (.value.name)                                as $name |
       (.value.variableCollectionId)                as $cid  |
@@ -49,7 +51,8 @@ colors_json=$(echo "$raw" | jq -r '
   | add
 ')
 
-# 4) Emit tokens.json (colors real, others stubbed)
+
+# 4) Emit tokens.json (only colors are real)
 mkdir -p "$(dirname "$OUT_JSON")"
 cat > "$OUT_JSON" <<EOF
 {
