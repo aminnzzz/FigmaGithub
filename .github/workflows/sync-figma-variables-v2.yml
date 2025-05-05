@@ -25,13 +25,11 @@ jobs:
         run: chmod +x .github/scripts/fetch-figma-variables-v2.sh
 
       - name: Run Figma sync script
-        working-directory: ${{ github.workspace }}
         env:
           FIGMA_ACCESS_TOKEN: ${{ secrets.FIGMA_ACCESS_TOKEN }}
           FIGMA_FILE_KEY:    ${{ inputs.fileKey }}
           FIGMA_API_BASE:    https://api.figma.com/v1
-        run: |
-          ./.github/scripts/fetch-figma-variables-v2.sh
+        run: ./.github/scripts/fetch-figma-variables-v2.sh
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
