@@ -24,35 +24,35 @@ cols=$(echo "$response" | jq '.meta.variableCollections')
 # Build variable map
 declare -A nameMap typeMap rawMap
 for id in $(echo "$vars" | jq -r 'keys[]'); do
-  var=$(echo "$vars" | jq -r --arg id "$id" '.[$id]')
-  colId=$(echo "$var" | jq -r '.variableCollectionId')
-  coll=$(echo "$cols" | jq -r --arg colId "$colId" '.[$colId]')
+  entry=$(echo "$vars" | jq -c --arg id "$id" '.[$id]')
+  colId=$(echo "$entry" | jq -r '.variableCollectionId')
+  coll=$(echo "$cols" | jq -c --arg colId "$colId" '.[$colId]')
   [[ "$coll" == "null" ]] && { echo "⚠️ Missing collection $colId for $id" >&2; continue; }
   modeId=$(echo "$coll" | jq -r '.defaultModeId')
-  value=$(echo "$var" | jq -c --arg modeId "$modeId" '.valuesByMode[$modeId] // empty')
-  [[ -z "$value" ]] && { echo "⚠️ Mode $modeId missing for $id" >&2; continue; }
-  nameMap["$id"]=$(echo "$var" | jq -r '.name | @sh' | sed "s/^'//;s/'$//")
-  typeMap["$id"]=$(echo "$var" | jq -r '.resolvedType')
-  rawMap["$id"]="$value"
+  rawVal=$(echo "$entry" | jq -c --arg modeId "$modeId" '.valuesByMode[$modeId] // empty')
+  [[ -z "$rawVal" ]] && { echo "⚠️ Mode $modeId missing for $id" >&2; continue; }
+  nameMap["$id"]=$(echo "$entry" | jq -r '.name | @sh' | sed "s/^'//;s/'$//")
+  typeMap["$id"]=$(echo "$entry" | jq -r '.resolvedType')
+  rawMap["$id"]="$rawVal"
 done
 
 # Resolve aliases
 resolve() {
-  local id="$1" visited=()
+  local curr="$1" visited=()
   while true; do
-    for v in "${visited[@]}"; do [[ "$v" == "$id" ]] && { echo null; return; }; done
-    visited+=("$id")
-    val="${rawMap[$id]}"
-    typ="${typeMap[$id]}"
+    for v in "${visited[@]}"; do [[ "$v" == "$curr" ]] && { echo null; return; }; done
+    visited+=("$curr")
+    val="${rawMap[$curr]}"
+    typ="${typeMap[$curr]}"
     if [[ "$typ" == "VARIABLE_ALIAS" ]]; then
-      id=$(echo "$val" | jq -r '.id')
+      curr=$(echo "$val" | jq -r '.id')
       continue
     fi
     echo "$val"; return
   done
 }
 
-# Initialize output token structure
+# Initialize output structure
 mkdir -p "$(dirname "$OUTPUT_PATH")"
 echo '{"color":{},"padding":{},"spacing":{},"radius":{},"borderWidth":{},"typography":{}}' > tmp-tokens.json
 
@@ -63,10 +63,11 @@ for id in "${!nameMap[@]}"; do
   value=$(resolve "$id")
 
   if [[ "$typ" == "COLOR" ]]; then
-    hex=$(echo "$value" | jq -r '. as {r,g,b,a?} |
-      def clamp(v): if v<0 then 0 elif v>1 then 1 else v end;
-      def toHex(v): ((clamp(v)*255)|round|tohex)|ascii_upcase;
-      if .a<1 then "#" + toHex(.r)+toHex(.g)+toHex(.b)+toHex(.a) else "#" + toHex(.r)+toHex(.g)+toHex(.b) end')
+    hex=$(echo "$value" | jq -r '
+      def clamp(f): if f<0 then 0 elif f>1 then 1 else f end;
+      def toHx(f): (clamp(f)*255 | round | tohex) as $h | if ($h | length)==1 then "0" + $h else $h end | ascii_upcase;
+      "#" + (toHx(.r) + toHx(.g) + toHx(.b) + (if ((.a // 1) < 1) then toHx(.a // 1) else "" end))
+    ')
     jq ".color[\"$name\"]={value:\"$hex\",type:\"color\"}" tmp-tokens.json > tmp2.json && mv tmp2.json tmp-tokens.json
 
   elif [[ "$typ" =~ ^(FLOAT|NUMBER)$ ]]; then
