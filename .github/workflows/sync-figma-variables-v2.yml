@@ -1,4 +1,4 @@
-name: Sync Figma Variables
+name: Sync Figma Variables V2
 
 on:
   workflow_dispatch:
@@ -20,6 +20,9 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y jq yq
+
+      - name: Make sync script executable
+        run: chmod +x .github/scripts/fetch-figma-variables-v2.sh
 
       - name: Run Figma sync script
         working-directory: ${{ github.workspace }}
