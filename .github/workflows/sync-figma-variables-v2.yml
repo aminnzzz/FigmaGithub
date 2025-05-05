@@ -18,7 +18,7 @@ jobs:
       - name: Fetch Figma Variables (bash)
         run: |
           chmod +x .github/scripts/fetch-figma-variables-v2.sh
-          .github/scripts/fetch-figma-variables.sh \
+          .github/scripts/fetch-figma-variables-v2.sh \
             "$FIGMA_ACCESS_TOKEN" \
             "${{ inputs.fileKey }}"
         env:
