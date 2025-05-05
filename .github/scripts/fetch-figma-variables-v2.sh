@@ -19,34 +19,36 @@ if [[ "$status" -ne 200 || "$error" == "true" ]]; then
   exit 1
 fi
 
-# 3) Transform via jq (here-string avoids --argfile and quoting issues)
+# 3) Transform via jq
 jq '
+  # Recursively resolve VARIABLE_ALIAS
   def resolve($id):
-    (.meta.variables[$id] // {}) as $var
+    (.variables[$id] // {}) as $var
     | .meta.variableCollections[$var.variableCollectionId].defaultModeId as $mode
-    | $var.valuesByMode[$mode] as $v
-    | if ($v|type)=="object" and $v.type=="VARIABLE_ALIAS" then resolve($v.id) else $v end;
+    | $var.valuesByMode[$mode]         as $v
+    | if ($v|type)=="object" and $v.type=="VARIABLE_ALIAS" 
+      then resolve($v.id) 
+      else $v 
+      end;
 
+  # 0–255 integer to two‐char hex
   def hex2(i):
     (i|floor) as $x
     | ($x/16|floor) as $h1
     | ($x%16)    as $h2
     | "0123456789ABCDEF"[$h1:1] + "0123456789ABCDEF"[$h2:1];
 
+  # Start with empty buckets
   {
-    color:    {},
-    spacing:  {},
-    padding:  {},
-    radius:   {},
-    borderWidth: {},
-    typography:  {}
+    color: {}, spacing: {}, padding: {}, radius: {}, borderWidth: {}, typography: {}
   }
-  | reduce ( .meta.variables | to_entries[] ) as $e (
+  | reduce ( .variables | to_entries[] ) as $e (
       .;
       ($e.value.resolvedType) as $t
-      | ($e.value.name) as $name
-      | resolve($e.key)    as $v
+      | ($e.value.name)       as $name
+      | resolve($e.key)       as $v
 
+      # COLOR → hex
       | if $t=="COLOR" then
           ($v.r*255|floor) as $r
           | ($v.g*255|floor) as $g
@@ -54,8 +56,9 @@ jq '
           | (hex2($r)+hex2($g)+hex2($b)) as $hex
           | .color[$name]     = {value:"#\($hex)",    type:"color"}
 
+      # FLOAT/NUMBER → other categories
       elif $t=="FLOAT" or $t=="NUMBER" then
-          ($v|tostring)    as $s
+          ($v|tostring)     as $s
           | if     $name|test("^spacing/";"i")        then .spacing[$name]     = {value:$s,      type:"spacing"}
             elif  $name|test("^padding/";"i")        then .padding[$name]     = {value:$s,      type:"padding"}
             elif  $name|test("^(radius|border-?radius)/";"i") then .radius[$name]      = {value:$s,      type:"borderRadius"}
@@ -70,7 +73,7 @@ jq '
     )
 ' <<<"$raw" > "$OUT_JSON"
 
-# 4) Report
+# 4) Count and report
 count=$(jq '(.color|keys|length)
            +(.spacing|keys|length)
            +(.padding|keys|length)
