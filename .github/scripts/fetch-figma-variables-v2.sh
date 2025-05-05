@@ -63,10 +63,10 @@ for id in "${!nameMap[@]}"; do
   value=$(resolve "$id")
 
   if [[ "$typ" == "COLOR" ]]; then
-    hex=$(echo "$value" | jq -r '
-      def clamp(f): if f<0 then 0 elif f>1 then 1 else f end;
-      def toHx(f): (clamp(f)*255 | round | tohex) as $h | if ($h | length)==1 then "0" + $h else $h end | ascii_upcase;
-      "#" + (toHx(.r) + toHx(.g) + toHx(.b) + (if ((.a // 1) < 1) then toHx(.a // 1) else "" end))
+    hex=$(echo "$value" | jq -r '\
+      def clamp(f): if f<0 then 0 elif f>1 then 1 else f end;\
+      def toHx(f): (clamp(f)*255 | round | tohex) as $h | if ($h | length)==1 then "0" + $h else $h end | ascii_upcase;\
+      "#" + (toHx(.r) + toHx(.g) + toHx(.b) + (if ((.a // 1) < 1) then toHx(.a // 1) else "" end))\
     ')
     jq ".color[\"$name\"]={value:\"$hex\",type:\"color\"}" tmp-tokens.json > tmp2.json && mv tmp2.json tmp-tokens.json
 
