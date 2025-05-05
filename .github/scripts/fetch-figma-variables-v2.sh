@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: fetch-figma-variables.sh <FIGMA_TOKEN> <FILE_KEY>
+# Usage: fetch-figma-variables-v2.sh <FIGMA_TOKEN> <FILE_KEY>
 FIGMA_TOKEN="$1"
 FILE_KEY="$2"
 API_BASE="${FIGMA_API_BASE:-https://api.figma.com/v1}"
@@ -17,7 +17,9 @@ if [[ "$status" != "200" || -n "$error" ]]; then
   exit 1
 fi
 
-vars=$(echo "$response" | jq '.meta.variables')\cols=$(echo "$response" | jq '.meta.variableCollections')
+# Extract variables and collections
+vars=$(echo "$response" | jq '.meta.variables')
+cols=$(echo "$response" | jq '.meta.variableCollections')
 
 # Build variable map
 declare -A nameMap typeMap rawMap
@@ -59,12 +61,14 @@ for id in "${!nameMap[@]}"; do
   name="${nameMap[$id]}"
   typ="${typeMap[$id]}"
   value=$(resolve "$id")
+
   if [[ "$typ" == "COLOR" ]]; then
     hex=$(echo "$value" | jq -r '. as {r,g,b,a?} |
       def clamp(v): if v<0 then 0 elif v>1 then 1 else v end;
       def toHex(v): ((clamp(v)*255)|round|tohex)|ascii_upcase;
       if .a<1 then "#" + toHex(.r)+toHex(.g)+toHex(.b)+toHex(.a) else "#" + toHex(.r)+toHex(.g)+toHex(.b) end')
     jq ".color[\"$name\"]={value:\"$hex\",type:\"color\"}" tmp-tokens.json > tmp2.json && mv tmp2.json tmp-tokens.json
+
   elif [[ "$typ" =~ ^(FLOAT|NUMBER)$ ]]; then
     num=$(echo "$value" | jq -r)
     # Classify token by name pattern
