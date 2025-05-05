@@ -6,12 +6,12 @@ set -euo pipefail
 API_BASE="${FIGMA_API_BASE:-https://api.figma.com/v1}"
 OUT_JSON="FigmaDemoGithub/tokens.json"
 
-# 1) Fetch
+# 1) Fetch the raw JSON
 raw=$(curl -sSL \
   -H "X-Figma-Token: $FIGMA_ACCESS_TOKEN" \
   "$API_BASE/files/$FIGMA_FILE_KEY/variables/local")
 
-# 2) Error check
+# 2) Basic error check
 status=$(jq -r '.status' <<<"$raw")
 error=$(jq -r '.error'  <<<"$raw")
 if [[ "$status" -ne 200 || "$error" == "true" ]]; then
@@ -19,43 +19,44 @@ if [[ "$status" -ne 200 || "$error" == "true" ]]; then
   exit 1
 fi
 
-# 3) Write the jq filter to a temp file
-cat << 'EOF' > /tmp/figma_filter.jq
-# 3a) Helpers
-def resolve($id):
+# 3) Write a standalone jq program that uses parametric resolve()
+cat > /tmp/figma_filter.jq << 'EOF'
+# resolve(id; vars; collections)
+def resolve($id; $vars; $collections):
   ($vars[$id] // {}) as $var
   | $collections[$var.variableCollectionId].defaultModeId as $mode
   | $var.valuesByMode[$mode] as $v
-  | if ($v|type)=="object" and $v.type=="VARIABLE_ALIAS"
-    then resolve($v.id)
-    else $v
+  | if ($v|type)=="object" and ($v.type=="VARIABLE_ALIAS") then
+      resolve($v.id; $vars; $collections)
+    else
+      $v
     end
 ;
 
 def hex2(i):
-  (i|floor) as $x
+  (i|floor)     as $x
   | ($x/16|floor) as $h1
   | ($x%16)       as $h2
   | "0123456789ABCDEF"[$h1:1] + "0123456789ABCDEF"[$h2:1]
 ;
 
-# 3b) Single pipeline
+# main pipeline
 . as $root
-| ($root.variables // $root.meta.variables) as $vars
-| $root.meta.variableCollections          as $collections
+| ($root.variables // $root.meta.variables)       as $vars
+| $root.meta.variableCollections                  as $collections
 | { color: {}, spacing: {}, padding: {}, radius: {}, borderWidth: {}, typography: {} }
 | reduce ($vars | to_entries[]) as $e (
     .;
     ($e.value.resolvedType) as $t
-    | ($e.value.name) as $name
-    | resolve($e.key) as $v
+    | ($e.value.name)       as $name
+    | resolve($e.key; $vars; $collections) as $v
 
     | if $t == "COLOR" then
         ($v.r*255|floor) as $r
         | ($v.g*255|floor) as $g
         | ($v.b*255|floor) as $b
         | (hex2($r)+hex2($g)+hex2($b)) as $hex
-        | .color[$name] = { value:"#\($hex)", type:"color" }
+        | .color[$name] = { value: "#\($hex)", type: "color" }
 
       elif $t == "FLOAT" or $t == "NUMBER" then
         ($v|tostring) as $s
@@ -65,7 +66,7 @@ def hex2(i):
           elif  $name|test("^(stroke|border-?width)/";"i")  then .borderWidth[$name]= {value:$s,      type:"borderWidth"}
           elif  $name|test("^(font-?size|type-?size)/";"i") then .typography[$name]  = {value:($s+"px"), type:"fontSize"}
           elif  $name|test("^line-?height/";"i")         then .typography[$name]  = {value:($s+"px"), type:"lineHeight"}
-          else                                           .typography[$name]  = {value:$s,      type:"number"}
+          else                                            .typography[$name]  = {value:$s,      type:"number"}
         end
 
       else .
@@ -73,14 +74,17 @@ def hex2(i):
   )
 EOF
 
-# 4) Apply it
+# 4) Run it
 echo "$raw" | jq -f /tmp/figma_filter.jq > "$OUT_JSON"
 
 # 5) Count & report
-count=$(jq '(.color|keys|length)
-           +(.spacing|keys|length)
-           +(.padding|keys|length)
-           +(.radius|keys|length)
-           +(.borderWidth|keys|length)
-           +(.typography|keys|length)' "$OUT_JSON")
+count=$(jq '
+  (.color  | keys | length)
++ (.spacing| keys | length)
++ (.padding| keys | length)
++ (.radius | keys | length)
++ (.borderWidth| keys | length)
++ (.typography | keys | length)
+' "$OUT_JSON")
+
 echo "✅ Wrote $count tokens to $OUT_JSON"
