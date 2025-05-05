@@ -28,7 +28,7 @@ jobs:
           FIGMA_FILE_KEY:    ${{ inputs.fileKey }}
           FIGMA_API_BASE:    https://api.figma.com/v1
         run: |
-          ./.github/scripts/fetch-figma-variables.sh
+          ./.github/scripts/fetch-figma-variables-v2.sh
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v5
