@@ -19,64 +19,65 @@ if [[ "$status" -ne 200 || "$error" == "true" ]]; then
   exit 1
 fi
 
-# 3) Write a temporary jq filter
+# 3) Write the jq filter to a temp file
 cat << 'EOF' > /tmp/figma_filter.jq
-# Recursively resolve VARIABLE_ALIAS chains
-def resolve($id):
-  ($vars[$id] // {}) as $var
-  | $collections[$var.variableCollectionId].defaultModeId as $mode
-  | $var.valuesByMode[$mode]                               as $v
-  | if ($v|type)=="object" and $v.type=="VARIABLE_ALIAS" 
-    then resolve($v.id) 
-    else $v 
-    end
-;
-
-# 0–255 → two-digit HEX
-def hex2(i):
-  (i|floor) as $x
-  | ($x/16|floor) as $h1
-  | ($x%16)        as $h2
-  | "0123456789ABCDEF"[$h1:1] + "0123456789ABCDEF"[$h2:1]
-;
-
-# Main pipeline
+# Begin by binding root, vars, and collections
 . as $root
-| ($root.variables // $root.meta.variables)               as $vars
-| $root.meta.variableCollections                          as $collections
-| { color: {}, spacing: {}, padding: {}, radius: {},
-    borderWidth: {}, typography: {} }
+| ($root.variables // $root.meta.variables)       as $vars
+| $root.meta.variableCollections                  as $collections
+
+# Now define helpers *after* $vars and $collections exist
+| def resolve($id):
+    ($vars[$id] // {}) as $var
+    | $collections[$var.variableCollectionId].defaultModeId as $mode
+    | $var.valuesByMode[$mode] as $v
+    | if ($v|type)=="object" and ($v.type=="VARIABLE_ALIAS")
+      then resolve($v.id)
+      else $v
+      end
+  ;
+
+  def hex2(i):
+    (i|floor) as $x
+    | ($x/16|floor) as $h1
+    | ($x%16)        as $h2
+    | "0123456789ABCDEF"[$h1:1] + "0123456789ABCDEF"[$h2:1]
+  ;
+
+# Start with empty buckets and reduce over all variables
+| { color: {}, spacing: {}, padding: {}, radius: {}, borderWidth: {}, typography: {} }
 | reduce ( $vars | to_entries[] ) as $e (
     .;
     ($e.value.resolvedType) as $t
     | ($e.value.name)       as $name
     | resolve($e.key)       as $v
 
-    # COLORS → HEX
-    | if $t=="COLOR" then
+    # COLOR → hex
+    | if $t == "COLOR" then
         ($v.r*255|floor) as $r
         | ($v.g*255|floor) as $g
         | ($v.b*255|floor) as $b
         | (hex2($r)+hex2($g)+hex2($b)) as $hex
         | .color[$name]     = {value:"#\($hex)", type:"color"}
 
-    # FLOAT/NUMBER → other categories
-    elif $t=="FLOAT" or $t=="NUMBER" then
-        ($v|tostring)     as $s
-        | if     $name|test("^spacing/";"i")         then .spacing[$name]     = {value:$s,      type:"spacing"}
-          elif  $name|test("^padding/";"i")         then .padding[$name]     = {value:$s,      type:"padding"}
+    # FLOAT/NUMBER → other buckets
+    elif $t == "FLOAT" or $t == "NUMBER" then
+        ($v|tostring)    as $s
+        | if     $name|test("^spacing/";"i")        then .spacing[$name]     = {value:$s,      type:"spacing"}
+          elif  $name|test("^padding/";"i")        then .padding[$name]     = {value:$s,      type:"padding"}
           elif  $name|test("^(radius|border-?radius)/";"i") then .radius[$name]      = {value:$s,      type:"borderRadius"}
           elif  $name|test("^(stroke|border-?width)/";"i")  then .borderWidth[$name]= {value:$s,      type:"borderWidth"}
           elif  $name|test("^(font-?size|type-?size)/";"i") then .typography[$name]  = {value:($s+"px"), type:"fontSize"}
-          elif  $name|test("^line-?height/";"i")       then .typography[$name]  = {value:($s+"px"), type:"lineHeight"}
-          else                                         .typography[$name]  = {value:$s,      type:"number"}
+          elif  $name|test("^line-?height/";"i")      then .typography[$name]  = {value:($s+"px"), type:"lineHeight"}
+          else                                        .typography[$name]  = {value:$s,      type:"number"}
         end
+
     else .
     end
-)
+  )
 EOF
 
-# 4) Pipe through jq using that filter
+# 4) Run the filter
 echo "$raw" | jq -f /tmp/figma_filter.jq > "$OUT_JSON"
 
 # 5) Count & report
