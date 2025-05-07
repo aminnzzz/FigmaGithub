@@ -107,19 +107,24 @@ function transformToStyleDictionary(variableMap) {
     typography: {}
   };
 
-  const paddingRegex    = /^padding\//i;
-  const spacingRegex    = /^spacing\//i;
-  const radiusRegex     = /^(?:radius|border-?radius)\//i;
-  const borderWidthRegex= /^(?:stroke|border-?width)\//i;
-  const fontSizeRegex   = /^(?:font-?size|type-?size)\//i;
-  const lineHeightRegex = /^line-?height\//i;
+  const paddingRegex       = /^padding\//i;
+  const spacingRegex       = /^spacing\//i;
+  const radiusRegex        = /^(?:radius|border-?radius)\//i;
+  const borderWidthRegex   = /^(?:stroke|border-?width)\//i;
+  const fontSizeRegex      = /^(?:font-?size|type-?size)\//i;
+  const lineHeightRegex    = /^line-?height\//i;
+  const fontFamilyRegex    = /^font\/family\//i;
+  const fontWeightRegex    = /^font\/weight\//i;
 
   for (const [id, { name, resolvedType }] of Object.entries(variableMap)) {
     const value = resolveVariableValue(id, variableMap);
 
     if (resolvedType === 'COLOR') {
       if (value && value.r != null) {
-        tokens.color[name] = { value: rgbaToHex(value), type: 'color' };
+        tokens.color[name] = {
+          value: rgbaToHex(value),
+          type: 'color'
+        };
       } else {
         console.warn(`⚠️ Unable to resolve COLOR for token "${name}"`);
       }
@@ -150,14 +155,32 @@ function transformToStyleDictionary(variableMap) {
         tokens.typography[name] = { value: `${num}px`, type: 'lineHeight' };
       }
       else {
-        // Fallback: generic numeric token
+        // Fallback: other numeric tokens go under typography
         tokens.typography[name] = { value: num.toString(), type: 'number' };
       }
+    }
+    else if (resolvedType === 'STRING') {
+      // handle font family & font weight tokens
+      if (fontFamilyRegex.test(name)) {
+        tokens.typography[name] = { value, type: 'fontFamily' };
+      }
+      else if (fontWeightRegex.test(name)) {
+        tokens.typography[name] = { value, type: 'fontWeight' };
+      }
+      else {
+        // any other string tokens
+        tokens.typography[name] = { value, type: 'string' };
+      }
+    }
+    else {
+      // You can extend here for BOOLEAN, etc.
+      console.warn(`⚠️ Unhandled type "${resolvedType}" for token "${name}"`);
     }
   }
 
   return tokens;
 }
+
 
 function resolveVariableValue(startId, variableMap) {
   const visited = new Set();
