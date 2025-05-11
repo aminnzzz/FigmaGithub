@@ -47,15 +47,7 @@ async function fetchFigmaVariables() {
   const { variableMap, primitives } = buildVariableMap(variables, variableCollections);
   const tokens = transformToStyleDictionary(variableMap, primitives);
 
-  const outputPath = path.resolve(__dirname, '../../FigmaDemoGithub/tokens.json');
-  await fs.mkdir(path.dirname(outputPath), { recursive: true });
-  await fs.writeFile(outputPath, JSON.stringify(tokens, null, 2));
-
-  // Dynamic count of all tokens across categories
-  const totalCount = Object.values(tokens)
-    .reduce((sum, bucket) => sum + Object.keys(bucket).length, 0);
-
-  console.log(`✅ Wrote ${totalCount} tokens to ${outputPath}`);
+  process.stdout.write(JSON.stringify(tokens));
   return tokens;
 }
 

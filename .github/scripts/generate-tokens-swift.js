@@ -11,12 +11,21 @@
 const fs = require('fs').promises;
 const path = require('path');
 
-// --- CLI arguments & defaults ---
 const [,, inputArg, outputArg] = process.argv;
-const INPUT_JSON  = inputArg  || path.join(__dirname, 'tokens.json');
-const OUTPUT_SWIFT = outputArg || path.join(
-  __dirname, '..', '..', 'Sources', 'Generated', 'Tokens.swift'
-);
+const OUTPUT_SWIFT = outputArg || path.join(__dirname, '..', 'Sources', 'Generated', 'Tokens.swift');
+
+async function readTokens() {
+  if (!inputArg || inputArg === '-') {
+    // Read JSON piped in over stdin
+    const chunks = [];
+    for await (let chunk of process.stdin) chunks.push(chunk);
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } else {
+    // Read from a file
+    const raw = await fs.readFile(inputArg, 'utf8');
+    return JSON.parse(raw);
+  }
+}
 
 // --- Helpers ---
 
@@ -51,17 +60,36 @@ function isLeafNode(obj) {
 }
 
 /**
- * Recursively emit a Swift enum (with raw type String) from a JS object.
+ * Determine if a node (and all its descendants) are numeric leaves.
+ * @param {object} node
+ * @returns {boolean}
+ */
+function isNumericEnum(node) {
+  // If this is a leaf, check its value
+  if (isLeafNode(node)) {
+    // Allow integer or floating‐point syntax
+    return /^-?\d+(\.\d+)?$/.test(String(node.value));
+  }
+  // Otherwise, recurse into children
+  return Object.values(node).every(child => isNumericEnum(child));
+}
+
+/**
+ * Recursively emit a Swift enum from a JS object, choosing Double vs String.
  *
  * @param {string} enumName    PascalCase enum name.
- * @param {object} node        Either a leaf `{ value }` or nested map of more keys.
+ * @param {object} node        Either a leaf `{ value }` or nested map.
  * @param {number} level       Indent level.
  * @param {string[]} lines     Accumulated Swift source lines.
  */
 function emitEnum(enumName, node, level, lines) {
-  lines.push(`${indent(level)}public enum ${enumName}: String {`);
+  // 1) Decide raw‐type at this enum level
+  const useDouble = isNumericEnum(node);
+  const rawType   = useDouble ? 'Double' : 'String';
 
-  // First, nested enums
+  lines.push(`${indent(level)}public enum ${enumName}: ${rawType} {`);
+
+  // 2) Nested enums first
   for (const key of Object.keys(node).sort()) {
     const child = node[key];
     if (!isLeafNode(child)) {
@@ -69,13 +97,21 @@ function emitEnum(enumName, node, level, lines) {
     }
   }
 
-  // Then, leaf cases
+  // 3) Leaf cases
   for (const key of Object.keys(node).sort()) {
     const child = node[key];
     if (isLeafNode(child)) {
       const caseName = toCamelCase(key);
-      const value    = child.value;
-      lines.push(`${indent(level + 1)}case ${caseName} = "${value}"`);
+      const rawValue = String(child.value);
+      const literal  = useDouble
+        // leave unquoted for Double
+        ? rawValue
+        // quote for String
+        : `"${rawValue}"`;
+
+      lines.push(
+        `${indent(level + 1)}case ${caseName} = ${literal}`
+      );
     }
   }
 
@@ -86,8 +122,7 @@ function emitEnum(enumName, node, level, lines) {
 (async function main() {
   try {
     // 1. Read & parse
-    const raw = await fs.readFile(INPUT_JSON, 'utf8');
-    const tokens = JSON.parse(raw);
+    const tokens = await readTokens();
 
     // 2. Build Swift lines
     const lines = [];
