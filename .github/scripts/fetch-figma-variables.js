@@ -106,7 +106,6 @@ function buildVariableMap(variables, variableCollections) {
 }
 
 function transformToStyleDictionary(variableMap, primitives) {
-  // Merge primitives so aliases resolve
   const allVariables = { ...primitives, ...variableMap };
   const tokens = {};
 
@@ -118,9 +117,12 @@ function transformToStyleDictionary(variableMap, primitives) {
     }
 
     const [rawCategory, ...rest] = parts;
+
+    // Skip any category starting with uppercase (not a design system token)
     if (/^[A-Z]/.test(rawCategory)) {
       continue;
     }
+
     const category = rawCategory.toLowerCase();
     const key = rest.join('/');
 
@@ -129,7 +131,9 @@ function transformToStyleDictionary(variableMap, primitives) {
     }
 
     const rawValue = resolveVariableValue(id, allVariables);
-    if (rawValue == null) continue;
+    if (rawValue == null) {
+      continue;
+    }
 
     let formatted;
     switch (resolvedType) {
@@ -141,7 +145,6 @@ function transformToStyleDictionary(variableMap, primitives) {
           continue;
         }
         break;
-
       case 'FLOAT':
       case 'NUMBER':
         const num = parseFloat(rawValue);
@@ -151,17 +154,15 @@ function transformToStyleDictionary(variableMap, primitives) {
         }
         formatted = num.toString();
         break;
-
       case 'STRING':
         formatted = rawValue;
         break;
-
       default:
         console.warn(`⚠️ Unhandled type "${resolvedType}" for "${name}"`);
         continue;
     }
 
-    tokens[category][name] = { value: formatted };
+    tokens[category][key] = { value: formatted };
   }
 
   return tokens;
