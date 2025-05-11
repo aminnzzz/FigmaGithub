@@ -116,7 +116,7 @@ function transformToStyleDictionary(variableMap, primitives) {
       continue;
     }
 
-    const [rawCategory, ...rest] = parts;
+    const [rawCategory, ...restParts] = parts;
 
     // Skip any category starting with uppercase (not a design system token)
     if (/^[A-Z]/.test(rawCategory)) {
@@ -124,16 +124,15 @@ function transformToStyleDictionary(variableMap, primitives) {
     }
 
     const category = rawCategory.toLowerCase();
-    const key = rest.join('/');
 
-    if (!tokens[category]) {
-      tokens[category] = {};
-    }
+    // Initialize category bucket
+    if (!tokens[category]) tokens[category] = {};
+
+    // Build nested path segments by splitting on '-' and '/'
+    const pathSegments = restParts.flatMap(seg => seg.split(/[-/]/));
 
     const rawValue = resolveVariableValue(id, allVariables);
-    if (rawValue == null) {
-      continue;
-    }
+    if (rawValue == null) continue;
 
     let formatted;
     switch (resolvedType) {
@@ -162,7 +161,19 @@ function transformToStyleDictionary(variableMap, primitives) {
         continue;
     }
 
-    tokens[category][key] = { value: formatted };
+    // Nest into tokens[category] according to pathSegments
+    let node = tokens[category];
+    pathSegments.forEach((seg, idx) => {
+      const isLast = idx === pathSegments.length - 1;
+      if (isLast) {
+        node[seg] = { value: formatted };
+      } else {
+        if (!node[seg] || typeof node[seg] !== 'object') {
+          node[seg] = {};
+        }
+        node = node[seg];
+      }
+    });
   }
 
   return tokens;
