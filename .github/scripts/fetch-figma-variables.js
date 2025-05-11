@@ -111,8 +111,22 @@ function transformToStyleDictionary(variableMap, primitives) {
   const tokens = {};
 
   for (const [id, { name, resolvedType }] of Object.entries(variableMap)) {
-    const category = name.split('/')[0];
-    if (!tokens[category]) tokens[category] = {};
+    const parts = name.split('/');
+    if (parts.length < 2) {
+      console.warn(`⚠️ Unexpected variable name format: "${name}"`);
+      continue;
+    }
+
+    const [rawCategory, ...rest] = parts;
+    if (/^[A-Z]/.test(rawCategory)) {
+      continue;
+    }
+    const category = rawCategory.toLowerCase();
+    const key = rest.join('/');
+
+    if (!tokens[category]) {
+      tokens[category] = {};
+    }
 
     const rawValue = resolveVariableValue(id, allVariables);
     if (rawValue == null) continue;
