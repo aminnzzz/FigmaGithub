@@ -102,27 +102,28 @@ function transformToStyleDictionary(variableMap, primitives) {
   const tokens = {};
 
   for (const [id, { name, resolvedType }] of Object.entries(variableMap)) {
-    const pathSegments = name.split(/[-/]/);
-    if (pathSegments.length < 2) {
+    const parts = name.split('/');
+    if (parts.length < 2) {
       console.warn(`⚠️ Unexpected variable name format: "${name}"`);
       continue;
     }
 
-    const rawCategory = pathSegments[0];
+    const [rawCategory, ...restParts] = parts;
 
-    // Skip any category starting with an uppercase letter
+    // Skip any category starting with uppercase (not a design system token)
     if (/^[A-Z]/.test(rawCategory)) {
       continue;
     }
 
     const category = rawCategory.toLowerCase();
-    const nestedPath = pathSegments.slice(1);
 
-    // Initialize the category bucket if necessary
+    // Initialize category bucket
     if (!tokens[category]) tokens[category] = {};
 
-    const resolved = resolveVariableValue(id, allVariables);
-    const rawValue = resolved?.value ?? null;
+    // Build nested path segments by splitting on '-' and '/'
+    const pathSegments = restParts.flatMap(seg => seg.split(/[-/]/));
+
+    const rawValue = resolveVariableValue(id, allVariables);
     if (rawValue == null) continue;
 
     let formatted;
@@ -152,10 +153,10 @@ function transformToStyleDictionary(variableMap, primitives) {
         continue;
     }
 
-    // Build nested object structure from path segments
+    // Nest into tokens[category] according to pathSegments
     let node = tokens[category];
-    nestedPath.forEach((seg, idx) => {
-      const isLast = idx === nestedPath.length - 1;
+    pathSegments.forEach((seg, idx) => {
+      const isLast = idx === pathSegments.length - 1;
       if (isLast) {
         node[seg] = { value: formatted };
       } else {
